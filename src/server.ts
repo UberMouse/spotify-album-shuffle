@@ -66,12 +66,14 @@ router.get("/logged", async (req, res) => {
 router.get("/refresh", async (req, res) => {
   const refresh_token = req.query.refresh_token as string;
   const response = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
     headers: {
       Authorization:
         "Basic " +
         Buffer.from(
           process.env.CLIENT_ID! + ":" + process.env.CLIENT_SECRET!
         ).toString("base64"),
+      "Content-Type": "application/x-www-form-urlencoded",
     },
     body: encodeFormData({
       grant_type: "refresh_token",
@@ -79,9 +81,7 @@ router.get("/refresh", async (req, res) => {
     }),
   });
 
-  const data: SpotifyToken = await response.json();
-
-  res.send(data);
+  res.send(await response.text());
 });
 
 app.use("/api", cors(), router);

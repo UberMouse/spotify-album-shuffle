@@ -73,7 +73,12 @@ export const authMachine = createMachine(
     actions: {
       setToken: assign((ctx, e) => {
         const t = "query" in e ? e.query : e.data;
+        // Attach the existing refresh token if we're refreshing, since that response doesn't include it
+        if (!("query" in e)) {
+          t.refresh_token = ctx.token?.refresh_token!;
+        }
 
+        console.log("Saving token", t);
         ctx.token = t;
         token = t;
       }),
