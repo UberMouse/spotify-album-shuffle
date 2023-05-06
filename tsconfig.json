@@ -1,0 +1,12 @@
+{
+  "include": ["src/**/*"],
+  "compilerOptions": {
+    "jsx": "react",
+    "strict": true,
+    "outDir": "dist",
+    "esModuleInterop": true,
+  },
+  "ts-node": {
+    "esm": true,
+  }
+}
