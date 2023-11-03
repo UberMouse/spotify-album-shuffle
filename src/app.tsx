@@ -5,31 +5,29 @@ import {
   PickEvent,
 } from "@koordinates/xstate-tree";
 import { assign } from "@xstate/immer";
+import humanizer from "humanize-duration";
 import React from "react";
 import { Col, Container, Row } from "react-bootstrap";
-import { Album, SimplifiedTrack, Track } from "spotify-types";
+import { Album } from "spotify-types";
 import { createMachine } from "xstate";
 
-import {
-  appendAlbumToQueue,
-  getQueue,
-  getSavedAlbums,
-  startQueueFromAlbum,
-} from "./api";
+import { appendAlbumToQueue, getSavedAlbums, startQueueFromAlbum } from "./api";
 import { authMachine } from "./auth";
 import { authorize, root, history } from "./routes";
-import { assertIsDefined, getLastTrack, getRandomAlbum } from "./utils";
+import { getAlbumLengthMs, getRandomAlbum } from "./utils";
 
-type Events = RoutingEvent<typeof root> | PickEvent<"AUTHENTICATED">;
+type Events =
+  | RoutingEvent<typeof root>
+  | PickEvent<"AUTHENTICATED">
+  | { type: "RESET" };
 type Context = {
-  albums?: Album[];
-  queue?: Track[];
-  currentlyPlaying?: Track;
-  lastAddedTrack?: SimplifiedTrack;
+  libraryAlbums: Album[];
+  queuedAlbums: Album[];
+  targetQueueDurationMs: number;
 };
 const machine = createMachine(
   {
-    /** @xstate-layout N4IgpgJg5mDOIC5QEMAOqB0BXAdgQSwBcALSAYjwFUAVACQFEA5agSQGE9r6ARAbQAYAuolCoA9rACWhSWJwiQAD0QBmFQE4MARnUBWAEwAOQ7pWH+KrQHYANCACeiI-ozqrK3eoAs+rfy0AbBYAvsF2aJi4BCTkAOIA8gD61EkASvHx1ALCSCDiUjJyCsoIXlZWGEZqXj78Vua6AXaOCFr6KhgqVvq6ht1l-Ia+oeHoGMhEpDgyAMbIhJAYAE6QkiszMjhQZAnJaRlZQgr50rLyuSUqAboY-F5tJoZ6+vpWTQ6IXuouPV3qQQEVC8tIYRiAIuNJmBppI5gsIBg5KkxGJCBgYIRNlAWDhTsgADbcebIMgQORgDCSHAANzEAGsKRCJjEYXDFkiUWiMVicXjCcSEFTaXCztlsscJKcihdVOoOrp+IqvPxGiYvBpmogAt1OnpvjVfLofOowUyoaz5uycMjURhUPjkPZUsgcGSALZ4fEAIywbtJ5MpNPpjLGzKms0tCI5tvtjudrrEHu9vsFQZFcjFR1yJ0K51AJT8XkMuoC11LvWVlk1CG1Lg0nn0Bq0Rv0JrC4ND5oj8MR1s5GDdcmkYiWVKgAEUsGApxgAGZgQgzYhsLBLFbTfH2AAKDvsY-9OApQuD407LO7VptaMHuMII7Hk+nFPni+Xq-XhE3O8dY9TwvmopCOK2aSrmxSII0NxqFYipBN4qr6NW6j8AErhWFogR1K8Xz6KaZ7hrCka9leA5Dneo5bI+M4QAuYBLG6VL7sBoigWc4GtFoliuDo+iAt4ATeN0SHtBgph+AYWhfPU7h4ZgYbQheUZ9raN7DhRE5TtRtH0YxWxkLwWg5CxBRsTKHFceoPF8V4AllIhHytPwraifUJjdIEtReLJkLnoRPbRteZH3pRmkhqg0IQIwYAAO6ej6fpkoega0gyp5yV2fmXv2qnkQ+oVpRFUWxcmbp-mI6Y4JmRl5Kx0r5og1j+LcPReGJARtN0uhIYqtxGjZKGWOoQ0qKE7Y4GINHwLkEQSiZdVKIgAC0AReBg9yNJZgz3F0AT2S0i0Ydo2EoV8QSmN8uHthCURQhAs1SnmC0IJ4lS+P4GjPHoGHVu0WiiSC3xDbowP8ENoJXfhCmZXdIFzY9JQHah60CX4hjbW8e2qAJGDoQCRiGF0RhtqM6W+WyCIrBAaxgBsY73WBZl6DjZjXG0ehBDBXjVq1FS+EEKiDJJVhuKY3nyRa-nKYQ9OmfVCBcRWAtPM2hi7WY1a9C4u09M2dQYXcYsZeTxH9tyY68jIBJEoQyAy-NJRDGtNlFitfjIeq7wtNq-BHT0oPe7UWiG2TREBXau7xu6cW+nb8OIDBLiBBhjQoQJgy2A53u+wq-yc5dJM+QRxthzlwUaU+sfscLolo0rlm9GrhjVoYfiVC3KoPM2Z3B0XodS6Rt5l1Rz4LkuK5rgpX67nTsMPexHU1+qgz16r7RNw5TwVPUha9OYfSlj3UPF-3pfqcPGA0QsOm4lsleM98txWMDO2ExY6jCcWOhvOoxiuTZI0Q1Jr3SWJFT55SfBgaKyBTi31ngzOW1gfDNT8PoQYGh2oZxaCgv6pY6geHgu1e4h8JZZRUkFM++UIiFRitHN0d8EHqk0EYFWnE9Cqxss3NwON26tWMOna4o1ghAA */
+    /** @xstate-layout N4IgpgJg5mDOIC5QEMAOqB0BXAdgQSwBcALSAYjwFUAVACQFEA5agSQGE9r6ARAbQAYAuolCoA9rACWhSWJwiQAD0QBmFQE4MARnUBWAEwAOQ7pWH+KrQHYANCACeiI-ozqrK3eoAs+rfy0AbBYAvsF2aJi4BCTkAOIA8gD61EkASvHx1ALCSCDiUjJyCsoIXlZWGEZqXj78Vua6AXaOCFr6KhgqVvq6ht1l-Ia+oeHoGMhEpDgyAMbIhJAYAE6QkiszMjhQZAnJaRlZQgr50rLyuSUqAboY-F5tJoZ6+vpWTQ6IXuouPV3qQQEVC8tIYRiAIuNJmBppI5gsIBg5KkxGJCBgYIRNlAWDhTsgADbcebIMgQORgDCSHAANzEAGsKRCJjEYXDFkiUWiMVicXjCcSEFTaXCztlsscJKcihdPv4MLp+IqvHUTFddFpmohrlpbgEeup1FoQVplaCwuCxsyprN5uycMjURhUPjkPZUsgcGSALZ4fEAIywXtJ5MpNPpjMtUNZtoRHMdztd7s9Yh9-sDgrDIrkYqOuROhXOoBKfi8hk6-2uAWuhmVlk1CACem0LwMg26Rqs6jBTKjNvhiPtnIwAEcsGAsFSoJRUL6A17YOMIBBJ7PA7BqGIAIpjseUiD4sBkcV5yUF4qIY0YGr1Nz6AJ9Kv1et+LquXS9HxDFT8RtebuRlk+ztB00VHcdJ2nVd50XZctig9ctx3ClJH3Q9eC0HJRFPM5z1aVwDQNLx73qQxAhLZ8fwqIxDTePQTS0Dx-0wK1oSA2NB0dMCJy2SC02g5AlxXPiEO3cdGUEuC+ODHBkLDBlxgA61YRjAcQJHHcIJnYSYKEucRKQnTJLnDNhXmUUhGPLCChwmVSiBTpS3+QY9UNDwvGfDs3w-K51AsXQ-3NHtAOU-s41AjSeK0vTDKgeCN1E3cBNg2KpLAJYljEJYnRdQgADNMq9BTmN7ELgKHLjNPgmK4sQsTqr4kyxCzHAc0wvJsOlItPkCByniCHxvisNp63+Ms9R6OoAj8KbviYyFgrZdi1IqyKqqSyB6BwMQsCgYh4LIVJ6AAZXoQ42vzGyuoQN4XDUapG30OpBufHovGbCa3BI78zXNLaIDgBQIglazOqURAAFp2jLRUYdMNojRretwaNZsrHuBVbwrLtArGKIoQgYGpULMGEE8SpfH8DRnjojUPgQdodXVJ59ANd8MfUM1RmKhaY0Js9bOR3zbhh-g4d8EF3LpnyMCGoIWbRnwvEsOaWOjfsVmXdYsT5y6SabdxDG1FnGjqO56y8XQqMCCxBhNTsrFMFWSsW1TOR10GSmRnxhdhyxxcRunGh1ajrCI4wVB8XQnZ50KOK5MBMUnXkZAJIlCGQd3iZKTsZc7Uj-iG-4NHeFoAlLGWnmsS3ej67GufmpSXbC7LEw9b0oMz3CrH4FwyK0E2q18vp6wCbv3ox0e7n0aPG5U5uVqnKK107gXvB9xUxYRjR607DpxoVfzG3VEIce52fY+WiLF7WiSUr0+KkJXq7waI9fRb9rf1HrYwdTaCbrmVD+UsM9WKlSWuVK+vFopJV0muB+dUUIHifiTN6ItFR+BrH4auI0awVxot3TwX464WjPqApucd1LgVWtpGBRk4G1USrfDuJ4QZZ0QDcO6d0ygkRVLoDyFsvI1hqF8F4nMSENzIXPChC8oFrhghtLaO09rCWQSUWotxCHeHKBzIYd5nzfgqBbD8d4fz6DKNjUIQA */
     predictableActionArguments: true,
     id: "app",
     schema: {
@@ -40,18 +38,19 @@ const machine = createMachine(
           data: {} as { albums: Album[] },
         },
         playRandomAlbum: {
-          data: {} as SimplifiedTrack,
+          data: {} as Album,
         },
         appendNewAlbum: {
-          data: {} as SimplifiedTrack,
-        },
-        fetchCurrentlyPlaying: {
-          data: {} as { currently_playing: Track; queue: Track[] },
+          data: {} as Album,
         },
       },
     },
     tsTypes: {} as import("./app.typegen").Typegen0,
-    context: {},
+    context: {
+      libraryAlbums: [],
+      queuedAlbums: [],
+      targetQueueDurationMs: 1000 * 60 * 60 * 8,
+    },
     invoke: {
       src: "auth",
       id: "auth-slot",
@@ -76,6 +75,7 @@ const machine = createMachine(
             },
           },
           onRoot: {
+            id: "root",
             initial: "gettingInitialData",
             states: {
               gettingInitialData: {
@@ -87,47 +87,50 @@ const machine = createMachine(
                   },
                 },
               },
+
               playRandomAlbum: {
                 invoke: {
                   src: "playRandomAlbum",
                   onDone: {
-                    target: "monitoringQueue",
-                    actions: "saveLastTrack",
+                    target: "queuingUpAlbums",
+                    actions: "saveAlbumToQueue",
                   },
                 },
               },
-              monitoringQueue: {
-                initial: "fetchCurrentlyPlaying",
+
+              queuingUpAlbums: {
+                initial: "addingAlbumsToQueue",
+                id: "queuing",
                 states: {
-                  fetchCurrentlyPlaying: {
-                    invoke: {
-                      src: "fetchCurrentlyPlaying",
-                      onDone: {
-                        target: "determining",
-                        actions: "saveQueue",
+                  addingAlbumsToQueue: {
+                    initial: "idle",
+                    states: {
+                      idle: {
+                        always: [
+                          {
+                            cond: "minimumQueueDurationReached",
+                            target: "#queuing.addedEnoughAlbums",
+                          },
+                          { target: "addingAlbum" },
+                        ],
+                      },
+                      addingAlbum: {
+                        invoke: {
+                          src: "appendNewAlbum",
+                          onDone: {
+                            target: "idle",
+                            actions: "saveAlbumToQueue",
+                          },
+                          onError: "idle",
+                        },
                       },
                     },
                   },
-                  determining: {
-                    always: [
-                      {
-                        target: "appendNewAlbum",
-                        cond: "currentlyPlayingIsLastAddedTrack",
-                      },
-                      { target: "waiting" },
-                    ],
-                  },
-                  waiting: {
-                    after: {
-                      queueCheckDelay: "fetchCurrentlyPlaying",
-                    },
-                  },
-                  appendNewAlbum: {
-                    invoke: {
-                      src: "appendNewAlbum",
-                      onDone: {
-                        target: "fetchCurrentlyPlaying",
-                        actions: "saveLastTrack",
+                  addedEnoughAlbums: {
+                    on: {
+                      RESET: {
+                        target: "#root.playRandomAlbum",
+                        actions: "resetState",
                       },
                     },
                   },
@@ -145,48 +148,28 @@ const machine = createMachine(
       getInitialData: async () => {
         return { albums: await getSavedAlbums() };
       },
-      fetchCurrentlyPlaying: async ({ lastAddedTrack }) => {
-        // Takes a bit for Spotify to update the queue
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        assertIsDefined(lastAddedTrack);
-
-        const queueInfo = await getQueue();
-        const queue: Track[] = [];
-
-        // The queue includes lots of duplicate tracks because it... loops?
-        // This grabs from the queue until we detect the end ourselves
-        for (const track of queueInfo.queue) {
-          queue.push(track);
-
-          if (track.id === lastAddedTrack.id) {
-            break;
-          }
-        }
-
-        return {
-          currently_playing: queueInfo.currently_playing,
-          queue,
-        };
-      },
-      playRandomAlbum: async ({ albums }) => {
-        assertIsDefined(albums);
-        const randomAlbum = getRandomAlbum(albums);
+      playRandomAlbum: async ({ libraryAlbums, queuedAlbums }) => {
+        const randomAlbum = getRandomAlbum(libraryAlbums, queuedAlbums);
 
         await startQueueFromAlbum(randomAlbum);
 
-        console.log(getLastTrack(randomAlbum), randomAlbum);
-        return getLastTrack(randomAlbum);
+        return randomAlbum;
       },
-      appendNewAlbum: async ({ albums }) => {
-        assertIsDefined(albums);
-        const randomAlbum = getRandomAlbum(albums);
+      appendNewAlbum: async ({ libraryAlbums, queuedAlbums }) => {
+        const randomAlbum = getRandomAlbum(libraryAlbums, queuedAlbums);
 
         await appendAlbumToQueue(randomAlbum);
 
-        return getLastTrack(randomAlbum);
+        return randomAlbum;
       },
     },
     actions: {
+      resetState: assign((ctx) => {
+        ctx.queuedAlbums = [];
+      }),
+      saveAlbumToQueue: assign((ctx, e) => {
+        ctx.queuedAlbums.push(e.data);
+      }),
       redirectToRoot: () => {
         setTimeout(() =>
           root.navigate({
@@ -197,32 +180,21 @@ const machine = createMachine(
         );
       },
       saveInitialData: assign((ctx, e) => {
-        ctx.albums = e.data.albums;
+        ctx.libraryAlbums = e.data.albums;
       }),
       startOAuthFlow: () => {
         window.location.href = "http://localhost:8888/api/login";
       },
-      saveQueue: assign((ctx, e) => {
-        ctx.currentlyPlaying = e.data.currently_playing;
-        ctx.queue = e.data.queue;
-      }),
-      saveLastTrack: assign((ctx, e) => {
-        ctx.lastAddedTrack = e.data;
-      }),
     },
     guards: {
-      currentlyPlayingIsLastAddedTrack: ({
-        currentlyPlaying,
-        lastAddedTrack,
-      }) => {
-        assertIsDefined(currentlyPlaying, "currentlyPlaying");
-        assertIsDefined(lastAddedTrack, "lastAddedTrack");
+      minimumQueueDurationReached: (ctx) => {
+        const queueDuration = ctx.queuedAlbums.reduce(
+          (acc, album) => acc + getAlbumLengthMs(album),
+          0
+        );
 
-        return currentlyPlaying.id === lastAddedTrack.id;
+        return queueDuration >= ctx.targetQueueDurationMs;
       },
-    },
-    delays: {
-      queueCheckDelay: 60 * 1000,
     },
   }
 );
@@ -235,56 +207,55 @@ function Loading() {
   );
 }
 
-function CurrentlyPlaying({
-  currentPlaying,
-  queue,
-}: {
-  currentPlaying: Track;
-  queue: Track[];
-}) {
-  return (
-    <Row>
-      <Col>
-        <p>
-          Currently playing: {currentPlaying.name} by{" "}
-          {currentPlaying.artists.map((artist) => artist.name).join(", ")}
-        </p>
-      </Col>
-      <Col>
-        {queue.map((track) => (
-          <Row key={track.id}>
-            <Col>
-              {track.name} by{" "}
-              {track.artists.map((artist) => artist.name).join(", ")}
-            </Col>
-          </Row>
-        ))}
-      </Col>
-    </Row>
-  );
-}
-
 const AppMachine = createXStateTreeMachine(machine, {
   selectors({ ctx, inState }) {
     return {
       loading:
-        !inState("authenticated.onRoot.monitoringQueue") ||
-        !ctx.currentlyPlaying,
-      queue: ctx.queue!,
-      currentlyPlaying: ctx.currentlyPlaying!,
+        inState("authenticated.onRoot.gettingInitialData") ||
+        !inState("authenticated.onRoot"),
+      completed: inState(
+        "authenticated.onRoot.queuingUpAlbums.addedEnoughAlbums"
+      ),
+      queue: ctx.queuedAlbums,
+      queueTarget: ctx.targetQueueDurationMs,
     };
   },
-  View: function App({ selectors }) {
+  actions({ send }) {
+    return {
+      startNewQueue() {
+        send({ type: "RESET" });
+      },
+    };
+  },
+  View: function App({ selectors, actions }) {
     return (
       <Container>
         <Row>
           {selectors.loading ? (
             <Loading />
           ) : (
-            <CurrentlyPlaying
-              currentPlaying={selectors.currentlyPlaying}
-              queue={selectors.queue}
-            />
+            <Container>
+              <Row>
+                Queue target duration: {humanizer(selectors.queueTarget)}
+              </Row>
+              <Row>Queue length: {selectors.queue.length} albums</Row>
+              <Row>
+                Queue duration:{" "}
+                {humanizer(
+                  selectors.queue.reduce(
+                    (acc, album) => acc + getAlbumLengthMs(album),
+                    0
+                  )
+                )}
+              </Row>
+              {selectors.completed && (
+                <Row>
+                  <button onClick={actions.startNewQueue}>
+                    Start new queue
+                  </button>
+                </Row>
+              )}
+            </Container>
           )}
         </Row>
       </Container>

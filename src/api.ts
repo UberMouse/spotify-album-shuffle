@@ -1,6 +1,6 @@
 import { stringify } from "querystring";
 
-import { Album, Saved, Track } from "spotify-types";
+import { Album, Saved, SimplifiedTrack } from "spotify-types";
 
 import { getToken } from "./auth";
 import { Paginate } from "./types";
@@ -43,6 +43,15 @@ async function callApi<T>({
     }
   );
 
+  if (response.status === 429) {
+    const retryAfterS = Number(response.headers.get("Retry-After")) + 1;
+    console.log("Hit rate limit, retrying after", retryAfterS, "seconds.");
+
+    await new Promise((resolve) => setTimeout(resolve, retryAfterS * 1000));
+
+    return callApi<T>({ endpoint, method, query, body });
+  }
+
   try {
     return await response.json();
   } catch {
@@ -50,30 +59,31 @@ async function callApi<T>({
   }
 }
 
-export function startQueueFromAlbum(album: Album) {
-  return callApi({
+export async function startQueueFromAlbum(album: Album) {
+  assert("items" in album.tracks);
+  await callApi({
     endpoint: `/me/player/play`,
     method: "PUT",
     body: {
       context_uri: album.uri,
     },
   });
-}
 
-export function getQueue() {
-  return callApi<{
-    currently_playing: Track;
-    queue: Track[];
-  }>({
-    endpoint: `/me/player/queue`,
-    method: "GET",
-  });
+  // Spotify sucks and immediatly queueg after playing an album inserts after the first song..
+  // So lets just queue up the rest of the album so that doesn't matter
+  const allTracksButFirst = album.tracks.items.slice(1);
+
+  return appendTracksToQueue(allTracksButFirst);
 }
 
 export async function appendAlbumToQueue(album: Album): Promise<void> {
   assert("items" in album.tracks);
 
-  for (const track of album.tracks.items) {
+  return appendTracksToQueue(album.tracks.items);
+}
+
+async function appendTracksToQueue(tracks: SimplifiedTrack[]) {
+  for (const track of tracks) {
     await callApi({
       endpoint: `/me/player/queue`,
       method: "POST",
@@ -87,24 +97,33 @@ export async function appendAlbumToQueue(album: Album): Promise<void> {
 export async function getSavedAlbums(): Promise<Album[]> {
   const albums: Album[] = [];
 
-  let page = 0;
-  while (true) {
-    page += 1;
-    const data = await callApi<Paginate<Saved<"album", Album>>>({
-      endpoint: "/me/albums",
-      method: "GET",
-      query: {
-        limit: 50,
-        offset: (page - 1) * 50,
-      },
-    });
+  const firstPage = await callApi<Paginate<Saved<"album", Album>>>({
+    endpoint: "/me/albums",
+    method: "GET",
+    query: {
+      limit: 50,
+    },
+  });
 
-    if (data.items) {
-      albums.push(...data.items.map((a) => a.album));
-    }
-    if (!data.next) {
-      break;
-    }
+  const totalPages = Math.ceil(firstPage.total / 50);
+
+  albums.push(...firstPage.items.map((item) => item.album));
+
+  const albumPages = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, i) =>
+      callApi<Paginate<Saved<"album", Album>>>({
+        endpoint: "/me/albums",
+        method: "GET",
+        query: {
+          limit: 50,
+          offset: (i + 1) * 50,
+        },
+      })
+    )
+  );
+
+  for (const page of albumPages) {
+    albums.push(...page.items.map((item) => item.album));
   }
 
   return albums;
